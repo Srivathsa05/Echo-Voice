@@ -21,7 +21,7 @@ export const config = {
   
   upload: {
     maxFileSize: parseInt(process.env.MAX_FILE_SIZE) || 10485760,
-    allowedExtensions: (process.env.ALLOWED_EXTENSIONS || 'mp3,wav,m4a').split(','),
+    allowedExtensions: (process.env.ALLOWED_EXTENSIONS || 'mp3,wav,m4a,webm').split(','),
     tempStoragePath: path.resolve(process.env.TEMP_STORAGE_PATH || './temp_audio/')
   },
   

@@ -21,6 +21,7 @@ export function ChatWidget() {
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   // Listen for ask-echo custom event
   useEffect(() => {
@@ -49,10 +50,35 @@ export function ChatWidget() {
     setMessages((m) => [...m, { role: "user", text }]);
     setInput("");
     setTyping(true);
-    setTimeout(() => {
-      setMessages((m) => [...m, { role: "ai", text: aiReply(text) }]);
-      setTyping(false);
-    }, 1200);
+
+    // Call backend API for dynamic response
+    const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+    
+    // Get sessionId from URL or use current
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get('sessionId') || currentSessionId;
+    
+    console.log('Chat sending with sessionId:', sessionId);
+    console.log('Current URL:', window.location.search);
+    
+    fetch(`${API_BASE}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: text, sessionId })
+    })
+      .then(res => res.json())
+      .then(data => {
+        console.log('Chat response:', data);
+        setMessages((m) => [...m, { role: "ai", text: data.answer || aiReply(text) }]);
+      })
+      .catch(err => {
+        console.error('Chat API error:', err);
+        // Fallback to static response if API fails
+        setMessages((m) => [...m, { role: "ai", text: aiReply(text) }]);
+      })
+      .finally(() => {
+        setTyping(false);
+      });
   };
 
   return (

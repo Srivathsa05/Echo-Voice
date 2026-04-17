@@ -101,13 +101,17 @@ export const consultationModel = {
   async saveQuestions(consultationId, questionsData) {
     try {
       const { questions, answers } = questionsData;
+      // Ensure arrays are properly stringified as JSON
+      const questionsJson = typeof questions === 'string' ? questions : JSON.stringify(questions);
+      const answersJson = typeof answers === 'string' ? answers : JSON.stringify(answers);
+      
       const result = await query(
         `INSERT INTO questions (consultation_id, questions, answers)
          VALUES ($1, $2, $3)
          ON CONFLICT (consultation_id) DO UPDATE
          SET questions = $2, answers = $3
          RETURNING *`,
-        [consultationId, questions, answers]
+        [consultationId, questionsJson, answersJson]
       );
       logger.info(`Questions saved for consultation: ${consultationId}`);
       return result.rows[0];

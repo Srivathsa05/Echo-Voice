@@ -80,6 +80,17 @@ export const audioService = {
 
   async processAudioFile(inputPath, sessionId) {
     try {
+      // Check if input file exists and has content
+      try {
+        const stats = await fs.stat(inputPath);
+        if (stats.size === 0) {
+          throw new Error('Input audio file is empty');
+        }
+        logger.info(`Audio file size: ${stats.size} bytes`);
+      } catch (statError) {
+        throw new Error(`Input audio file not found or inaccessible: ${statError.message}`);
+      }
+
       const outputDir = config.upload.tempStoragePath;
       await fs.mkdir(outputDir, { recursive: true });
 

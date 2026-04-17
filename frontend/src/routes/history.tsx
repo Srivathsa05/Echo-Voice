@@ -1,6 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { motion } from "framer-motion";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { SiteHeader } from "@/components/SiteHeader";
 import { GlassCard } from "@/components/glass/GlassCard";
 import { Input } from "@/components/ui/input";
@@ -20,20 +20,46 @@ export const Route = createFileRoute("/history")({
   component: History,
 });
 
-const items = [
-  { id: 1, title: "Diabetes follow-up", doctor: "Dr. Mehta", date: "14 Apr", duration: "6m 12s", tag: "Endocrinology", urgent: false },
-  { id: 2, title: "Chest pain assessment", doctor: "Dr. Iyer", date: "02 Apr", duration: "11m 04s", tag: "Cardiology", urgent: true },
-  { id: 3, title: "Pediatric checkup — Aarav", doctor: "Dr. Singh", date: "28 Mar", duration: "4m 30s", tag: "Pediatrics", urgent: false },
-  { id: 4, title: "Allergy panel review", doctor: "Dr. Rao", date: "19 Mar", duration: "8m 21s", tag: "General", urgent: false },
-  { id: 5, title: "Post-op recovery", doctor: "Dr. Khan", date: "11 Mar", duration: "5m 47s", tag: "Surgery", urgent: false },
-  { id: 6, title: "Hypertension review", doctor: "Dr. Mehta", date: "02 Mar", duration: "7m 18s", tag: "Cardiology", urgent: false },
-];
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 const filters = ["All", "Endocrinology", "Cardiology", "Pediatrics", "Surgery", "General"];
 
 function History() {
+  const router = useRouter();
   const [active, setActive] = useState("All");
   const [q, setQ] = useState("");
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchHistory();
+  }, []);
+
+  const fetchHistory = async () => {
+    try {
+      console.log('Fetching history from:', `${API_BASE}/api/history`);
+      const response = await fetch(`${API_BASE}/api/history`);
+      const data = await response.json();
+      console.log('History data received:', data);
+      
+      const formattedItems = data.consultations.map((c: any) => ({
+        id: c.sessionId,
+        title: c.title,
+        doctor: c.doctorName,
+        date: new Date(c.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short' }),
+        duration: c.duration ? `${Math.floor(c.duration / 60)}m ${Math.round(c.duration % 60)}s` : 'N/A',
+        tag: c.specialty || 'General',
+        urgent: c.urgent || false
+      }));
+      
+      console.log('Formatted items:', formattedItems);
+      setItems(formattedItems);
+    } catch (error) {
+      console.error('Error fetching history:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const list = items.filter(
     (i) => (active === "All" || i.tag === active) &&
@@ -79,19 +105,25 @@ function History() {
         </div>
 
         <div className="mt-8 grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {list.map((c, i) => (
-            <motion.div
-              key={c.id}
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
-              whileHover={{ y: -4 }}
-            >
-              <GlassCard className="p-5 cursor-pointer group h-full hover:shadow-elegant transition-shadow">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="w-11 h-11 rounded-xl gradient-primary text-primary-foreground grid place-items-center">
-                    <FileAudio className="w-5 h-5" />
-                  </div>
+          {loading ? (
+            <div className="col-span-full text-center py-20 text-muted-foreground">Loading history...</div>
+          ) : list.length === 0 ? (
+            <div className="col-span-full text-center py-20 text-muted-foreground">No consultations match.</div>
+          ) : (
+            list.map((c, i) => (
+              <motion.div
+                key={c.id}
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.05 }}
+                whileHover={{ y: -4 }}
+                onClick={() => router.navigate({ to: '/', search: { sessionId: c.id } })}
+              >
+                <GlassCard className="p-5 cursor-pointer group h-full hover:shadow-elegant transition-shadow">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="w-11 h-11 rounded-xl gradient-primary text-primary-foreground grid place-items-center">
+                      <FileAudio className="w-5 h-5" />
+                    </div>
                   {c.urgent && <Badge className="bg-alert/15 text-alert border-alert/30 hover:bg-alert/15">Urgent</Badge>}
                 </div>
                 <h3 className="font-semibold leading-tight">{c.title}</h3>
@@ -106,12 +138,9 @@ function History() {
                 </div>
               </GlassCard>
             </motion.div>
-          ))}
+            ))
+          )}
         </div>
-
-        {list.length === 0 && (
-          <div className="text-center py-20 text-muted-foreground">No consultations match.</div>
-        )}
       </main>
     </div>
   );

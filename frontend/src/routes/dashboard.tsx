@@ -87,6 +87,7 @@ function Dashboard() {
   const [smsDialogOpen, setSmsDialogOpen] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [sendingSms, setSendingSms] = useState(false);
+  const [currentRecorder, setCurrentRecorder] = useState<MediaRecorder | null>(null);
   const [recording, setRecording] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -100,6 +101,17 @@ function Dashboard() {
   const [results, setResults] = useState<ConsultationResults | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
+
+  // Load consultation from database when sessionId is in URL
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlSessionId = urlParams.get('sessionId');
+    
+    if (urlSessionId) {
+      setSessionId(urlSessionId);
+      fetchResults(urlSessionId);
+    }
+  }, []);
   const resultsRef = useRef<HTMLDivElement>(null);
   const pipelineRef = useRef<HTMLDivElement>(null);
 
@@ -160,6 +172,19 @@ function Dashboard() {
   const askEcho = (question: string) => {
     // Dispatch custom event that ChatWidget listens to
     window.dispatchEvent(new CustomEvent('ask-echo', { detail: { question } }));
+  };
+
+  const handleDone = () => {
+    console.log('Done button clicked');
+    setResults(null);
+    setSessionId(null);
+    setStage("idle");
+    setProgress(0);
+    setProcessingError(null);
+    setFileName(null);
+    setDoctorName("");
+    setPatientName("");
+    toast.success("Ready for new consultation");
   };
 
   const sendSMS = async () => {
@@ -315,30 +340,37 @@ function Dashboard() {
 
   const handleRecord = async () => {
     if (recording) {
+      // Stop recording
       setRecording(false);
-      
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(mediaStream);
-      const audioChunks: Blob[] = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        audioChunks.push(event.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: "audio/wav" });
-        promptForNames(new File([audioBlob], "live-recording.wav", { type: "audio/wav" }));
-        mediaStream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorder.start();
-      
-      setTimeout(() => {
-        mediaRecorder.stop();
-      }, 100);
+      if (currentRecorder) {
+        currentRecorder.stop();
+      }
     } else {
-      setRecording(true);
-      toast("Recording started", { description: "Tap again to stop recording." });
+      // Start recording
+      try {
+        const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(mediaStream);
+        const audioChunks: Blob[] = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+          promptForNames(new File([audioBlob], "live-recording.webm", { type: "audio/webm" }));
+          mediaStream.getTracks().forEach(track => track.stop());
+          setCurrentRecorder(null);
+        };
+
+        mediaRecorder.start();
+        setCurrentRecorder(mediaRecorder);
+        setRecording(true);
+        toast("Recording started", { description: "Tap again to stop recording." });
+      } catch (error) {
+        console.error("Error accessing microphone:", error);
+        toast.error("Microphone access denied", { description: "Please allow microphone access to record." });
+      }
     }
   };
 
@@ -472,6 +504,7 @@ function Dashboard() {
   setPhoneNumber={setPhoneNumber}
   sendingSms={sendingSms}
   sendSMS={sendSMS}
+  onDone={handleDone}
 />
                 </motion.div>
               )}
@@ -621,7 +654,7 @@ function urgencyClass(u: "green" | "amber" | "red") {
          "bg-success/15 text-success border-success/30";
 }
 
-function Results({ results, askEcho, smsDialogOpen, setSmsDialogOpen, phoneNumber, setPhoneNumber, sendingSms, sendSMS }: { 
+function Results({ results, askEcho, smsDialogOpen, setSmsDialogOpen, phoneNumber, setPhoneNumber, sendingSms, sendSMS, onDone }: { 
   results: ConsultationResults | null; 
   askEcho: (question: string) => void;
   smsDialogOpen: boolean;
@@ -630,7 +663,9 @@ function Results({ results, askEcho, smsDialogOpen, setSmsDialogOpen, phoneNumbe
   setPhoneNumber: (phone: string) => void;
   sendingSms: boolean;
   sendSMS: () => void;
+  onDone: () => void;
 }) {
+  console.log('Results component rendering, results:', results);
   if (!results) {
     return (
       <GlassCard variant="strong" className="p-6">
@@ -666,7 +701,12 @@ function Results({ results, askEcho, smsDialogOpen, setSmsDialogOpen, phoneNumbe
           <h2 className="text-xl font-semibold">Consultation summary</h2>
           <p className="text-xs text-muted-foreground font-mono mt-0.5">{doctor} · {patient} · {date} · {duration}</p>
         </div>
-        <ShareMenu sessionId={results.sessionId} onOpenSMS={() => setSmsDialogOpen(true)} />
+        <div className="flex items-center gap-2">
+          <Button onClick={onDone} variant="outline" className="glass border-glass-border hover:border-primary/40">
+            Done
+          </Button>
+          <ShareMenu sessionId={results.sessionId} onOpenSMS={() => setSmsDialogOpen(true)} />
+        </div>
       </div>
 
       <Tabs defaultValue="summary">
