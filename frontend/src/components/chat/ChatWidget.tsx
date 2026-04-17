@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MessageCircle, X, Send, Mic, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,10 +16,33 @@ const quickReplies = [
 export function ChatWidget() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([
-    { role: "ai", text: "Hi 👋 I'm Echo. Ask me anything about your last consultation with Dr. Mehta." },
+    { role: "ai", text: "Hi I'm Echo. Ask me anything about your last consultation with Dr. Mehta." },
   ]);
   const [input, setInput] = useState("");
   const [typing, setTyping] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+
+  // Listen for ask-echo custom event
+  useEffect(() => {
+    const handleAskEcho = (e: CustomEvent) => {
+      setPendingQuestion(e.detail.question);
+      setOpen(true);
+    };
+
+    window.addEventListener('ask-echo', handleAskEcho as EventListener);
+
+    return () => {
+      window.removeEventListener('ask-echo', handleAskEcho as EventListener);
+    };
+  }, []);
+
+  // Send pending question when chat opens
+  useEffect(() => {
+    if (open && pendingQuestion && !messages.some(m => m.role === 'user' && m.text === pendingQuestion)) {
+      send(pendingQuestion);
+      setPendingQuestion(null);
+    }
+  }, [open, pendingQuestion, messages]);
 
   const send = (text: string) => {
     if (!text.trim()) return;

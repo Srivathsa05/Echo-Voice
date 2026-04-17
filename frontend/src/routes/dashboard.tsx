@@ -82,8 +82,11 @@ function Dashboard() {
   const [stage, setStage] = useState<Stage>("idle");
   const [progress, setProgress] = useState(0);
   const [processingError, setProcessingError] = useState<string | null>(null);
-  const [questionAnswers, setQuestionAnswers] = useState<Map<number, string>>(new Map());
-  const [loadingAnswers, setLoadingAnswers] = useState<Set<number>>(new Set());
+  const [activeTab, setActiveTab] = useState("summary");
+  const [chatQuestion, setChatQuestion] = useState("");
+  const [smsDialogOpen, setSmsDialogOpen] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [sendingSms, setSendingSms] = useState(false);
   const [recording, setRecording] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -154,34 +157,40 @@ function Dashboard() {
     }
   };
 
-  const askEcho = async (question: string, questionIndex: number) => {
-    if (!results || !sessionId) return;
+  const askEcho = (question: string) => {
+    // Dispatch custom event that ChatWidget listens to
+    window.dispatchEvent(new CustomEvent('ask-echo', { detail: { question } }));
+  };
 
-    setLoadingAnswers(prev => new Set(prev).add(questionIndex));
+  const sendSMS = async () => {
+    if (!sessionId) return;
 
+    setSendingSms(true);
     try {
-      const response = await fetch(`${API_BASE}/chat`, {
+      const response = await fetch(`${API_BASE}/sms/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           sessionId,
-          question
+          phoneNumber,
+          type: 'summary'
         })
       });
 
-      if (!response.ok) throw new Error("Failed to get answer");
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to send SMS');
+      }
 
       const data = await response.json();
-      setQuestionAnswers(prev => new Map(prev).set(questionIndex, data.answer));
+      toast.success("SMS sent successfully", { description: `Message sent to ${phoneNumber}` });
+      setSmsDialogOpen(false);
+      setPhoneNumber("");
     } catch (error) {
-      console.error("Error asking Echo:", error);
-      toast.error("Echo couldn't answer", { description: "Please try again." });
+      console.error("SMS send error:", error);
+      toast.error("Failed to send SMS", { description: error instanceof Error ? error.message : "Please try again." });
     } finally {
-      setLoadingAnswers(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(questionIndex);
-        return newSet;
-      });
+      setSendingSms(false);
     }
   };
 
@@ -454,7 +463,16 @@ function Dashboard() {
                   transition={{ duration: 0.4 }}
                   ref={resultsRef}
                 >
-                  <Results results={results} questionAnswers={questionAnswers} loadingAnswers={loadingAnswers} askEcho={askEcho} />
+                  <Results 
+  results={results} 
+  askEcho={askEcho}
+  smsDialogOpen={smsDialogOpen}
+  setSmsDialogOpen={setSmsDialogOpen}
+  phoneNumber={phoneNumber}
+  setPhoneNumber={setPhoneNumber}
+  sendingSms={sendingSms}
+  sendSMS={sendSMS}
+/>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -509,6 +527,55 @@ function Dashboard() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={smsDialogOpen} onOpenChange={setSmsDialogOpen}>
+        <DialogContent className="glass-strong rounded-2xl sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send Consultation via SMS</DialogTitle>
+            <DialogDescription>
+              Enter the phone number to send the consultation summary.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="phone-number">Phone Number</Label>
+              <Input
+                id="phone-number"
+                type="tel"
+                placeholder="+1234567890"
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                autoFocus
+              />
+              <p className="text-xs text-muted-foreground">
+                Enter phone number in E.164 format (e.g., +1234567890)
+              </p>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" onClick={() => setSmsDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={sendSMS} 
+              disabled={!phoneNumber || sendingSms}
+              className="gradient-primary text-primary-foreground border-0"
+            >
+              {sendingSms ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4 mr-2" />
+                  Send SMS
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -554,11 +621,15 @@ function urgencyClass(u: "green" | "amber" | "red") {
          "bg-success/15 text-success border-success/30";
 }
 
-function Results({ results, questionAnswers, loadingAnswers, askEcho }: { 
+function Results({ results, askEcho, smsDialogOpen, setSmsDialogOpen, phoneNumber, setPhoneNumber, sendingSms, sendSMS }: { 
   results: ConsultationResults | null; 
-  questionAnswers: Map<number, string>;
-  loadingAnswers: Set<number>;
-  askEcho: (question: string, index: number) => void;
+  askEcho: (question: string) => void;
+  smsDialogOpen: boolean;
+  setSmsDialogOpen: (open: boolean) => void;
+  phoneNumber: string;
+  setPhoneNumber: (phone: string) => void;
+  sendingSms: boolean;
+  sendSMS: () => void;
 }) {
   if (!results) {
     return (
@@ -588,13 +659,14 @@ function Results({ results, questionAnswers, loadingAnswers, askEcho }: {
   ];
 
   return (
+    <>
     <GlassCard variant="strong" className="p-6">
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
           <h2 className="text-xl font-semibold">Consultation summary</h2>
           <p className="text-xs text-muted-foreground font-mono mt-0.5">{doctor} · {patient} · {date} · {duration}</p>
         </div>
-        <ShareMenu sessionId={results.sessionId} />
+        <ShareMenu sessionId={results.sessionId} onOpenSMS={() => setSmsDialogOpen(true)} />
       </div>
 
       <Tabs defaultValue="summary">
@@ -672,51 +744,41 @@ function Results({ results, questionAnswers, loadingAnswers, askEcho }: {
 
         <TabsContent value="questions" className="mt-5">
           <p className="text-sm text-muted-foreground mb-4">
-            {results.questions?.questions.length || 0} questions you didn't get to ask, generated from this consultation.
+            {(() => {
+              const questions = Array.isArray(results.questions) ? results.questions : results.questions?.questions || [];
+              return questions.length;
+            })()} questions you didn't get to ask, generated from this consultation.
           </p>
           <div className="space-y-2">
-            {results.questions && results.questions.questions.length > 0 ? (
-              results.questions.questions.map((question, i) => (
-                <div key={`q-${i}`} className="glass rounded-xl p-4">
-                  <div className="flex items-start gap-3">
-                    <span className="font-mono text-xs text-primary mt-1">Q{i + 1}</span>
-                    <div className="flex-1">
-                      <p className="font-medium">{question}</p>
-                      
-                      {questionAnswers.has(i) ? (
-                        <div className="mt-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
-                          <p className="text-sm text-foreground">{questionAnswers.get(i)}</p>
-                        </div>
-                      ) : (
-                        <div className="mt-3 flex gap-2">
+            {(() => {
+              const questions = Array.isArray(results.questions) ? results.questions : results.questions?.questions || [];
+              return questions.length > 0 ? (
+                questions.map((question, i) => (
+                  <div key={`q-${i}`} className="glass rounded-xl p-4">
+                    <div className="flex items-start gap-3">
+                      <span className="font-mono text-xs text-primary mt-1">Q{i + 1}</span>
+                      <div className="flex-1">
+                        <p className="font-medium">{question}</p>
+                        <div className="mt-3">
                           <Button 
                             size="sm" 
                             variant="outline" 
                             className="glass h-8 gap-1.5"
-                            onClick={() => askEcho(question, i)}
-                            disabled={loadingAnswers.has(i)}
+                            onClick={() => askEcho(question)}
                           >
-                            {loadingAnswers.has(i) ? (
-                              <>
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Asking...
-                              </>
-                            ) : (
-                              <>
-                                <MessageSquarePlus className="w-3.5 h-3.5" /> Ask Echo
-                              </>
-                            )}
+                            <MessageSquarePlus className="w-3.5 h-3.5" /> Ask Echo
                           </Button>
                         </div>
-                      )}
+                      </div>
                     </div>
                   </div>
+                ))
+              ) : (
+                <div className="text-sm text-muted-foreground p-4 rounded-xl bg-muted/40">
+                  No questions generated yet.
                 </div>
-              ))
-            ) : (
-              <div className="text-sm text-muted-foreground p-4 rounded-xl bg-muted/40">
-                No questions generated yet.
-              </div>
-            )}
+              );
+            })()}
           </div>
         </TabsContent>
 
@@ -747,10 +809,60 @@ function Results({ results, questionAnswers, loadingAnswers, askEcho }: {
         </TabsContent>
       </Tabs>
     </GlassCard>
+
+    <Dialog open={smsDialogOpen} onOpenChange={setSmsDialogOpen}>
+      <DialogContent className="glass-strong rounded-2xl sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Send Consultation via SMS</DialogTitle>
+          <DialogDescription>
+            Enter the phone number to send the consultation summary.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="phone-number">Phone Number</Label>
+            <Input
+              id="phone-number"
+              type="tel"
+              placeholder="+1234567890"
+              value={phoneNumber}
+              onChange={(e) => setPhoneNumber(e.target.value)}
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground">
+              Enter phone number in E.164 format (e.g., +1234567890)
+            </p>
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="ghost" onClick={() => setSmsDialogOpen(false)}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={sendSMS} 
+            disabled={!phoneNumber || sendingSms}
+            className="gradient-primary text-primary-foreground border-0"
+          >
+            {sendingSms ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Sending...
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4 mr-2" />
+                Send SMS
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
-function ShareMenu({ sessionId }: { sessionId: string }) {
+function ShareMenu({ sessionId, onOpenSMS }: { sessionId: string; onOpenSMS: () => void }) {
   const downloadPDF = async () => {
     try {
       const response = await fetch(`http://localhost:3001/api/export/pdf`, {
@@ -789,7 +901,7 @@ function ShareMenu({ sessionId }: { sessionId: string }) {
       <PopoverContent className="glass-strong rounded-2xl w-64 p-2">
         {[
           { icon: <MessageCircle className="w-4 h-4 text-success" />, label: "Send via WhatsApp", action: () => toast.success("WhatsApp share", { description: "Feature coming soon!" }) },
-          { icon: <Send className="w-4 h-4 text-trust" />, label: "Send via SMS", action: () => toast.success("SMS share", { description: "Feature coming soon!" }) },
+          { icon: <Send className="w-4 h-4 text-trust" />, label: "Send via SMS", action: onOpenSMS },
           { icon: <Download className="w-4 h-4 text-primary" />, label: "Download PDF", action: downloadPDF },
           { icon: <Copy className="w-4 h-4 text-muted-foreground" />, label: "Copy link", action: () => {
             navigator.clipboard.writeText(`http://localhost:5173/dashboard?session=${sessionId}`);

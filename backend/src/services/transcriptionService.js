@@ -100,70 +100,127 @@ export const transcriptionService = {
 
   identifySpeakers(segments) {
     const speakers = new Map();
-    let currentSpeaker = 'Doctor'; // Default to doctor for first segment
+    let currentSpeaker = 'Doctor';
     let speakerCount = 1;
 
-    // Patterns to identify doctor speech
+    // Strong doctor indicators
     const doctorPatterns = [
-      /\b(take|prescribe|medication|medicine|pill|tablet|dosage|mg|twice daily|once daily)\b/i,
-      /\b(diagnos|symptoms|condition|treatment|therapy|procedure)\b/i,
-      /\b(blood pressure|heart rate|temperature|examine|check|test)\b/i,
-      /\b(recommend|suggest|advice|should|need to)\b/i,
-      /\b(doctor|dr\.|physician|medical)\b/i,
-      /\b(\?+)$/ // Doctor often asks questions
+      /\b(take|prescribe|medication|medicine|pill|tablet|dosage|mg|twice daily|once daily|three times|every)\b/i,
+      /\b(diagnos|condition|treatment|therapy|procedure|surgery)\b/i,
+      /\b(blood pressure|heart rate|temperature|pulse|examine|check|test|lab|result)\b/i,
+      /\b(recommend|suggest|advice|should|need to|must|have to)\b/i,
+      /\b(doctor|dr\.|physician|medical|clinic|hospital)\b/i,
+      /\b(\?+)$/ 
     ];
 
-    // Patterns to identify patient speech
+    // Strong patient indicators
     const patientPatterns = [
-      /\b(i feel|i have|i'm experiencing|my pain|my symptom)\b/i,
-      /\b(hurts|ache|pain|sore|uncomfortable)\b/i,
-      /\b(scared|worried|concerned|anxious)\b/i,
-      /\b(when can|how long|what should|i need to know)\b/i,
-      /\b(patient)\b/i,
-      /\b(\?+)$/ // Patient also asks questions
+      /\b(i feel|i have|i'm experiencing|my pain|my symptom|i've been)\b/i,
+      /\b(hurts|ache|pain|sore|uncomfortable|bothering|troubling)\b/i,
+      /\b(scared|worried|concerned|anxious|nervous|afraid)\b/i,
+      /\b(when can|how long|what should|i need to know|is it normal)\b/i,
+      /\b(patient|me|i|my)\b/i,
+      /\b(\?+)$/
     ];
+
+    // Track conversation flow
+    let consecutiveDoctor = 0;
+    let consecutivePatient = 0;
 
     segments.forEach((segment, index) => {
       const text = segment.text.trim();
-      const lowerText = text.toLowerCase();
-
-      // Count matches for doctor and patient patterns
+      
       let doctorScore = 0;
       let patientScore = 0;
 
+      // Score doctor patterns
       doctorPatterns.forEach(pattern => {
-        if (pattern.test(text)) doctorScore += 2;
+        const matches = text.match(pattern);
+        if (matches) doctorScore += matches.length * 3;
       });
 
+      // Score patient patterns
       patientPatterns.forEach(pattern => {
-        if (pattern.test(text)) patientScore += 2;
+        const matches = text.match(pattern);
+        if (matches) patientScore += matches.length * 3;
       });
 
-      // Additional heuristics
-      if (text.includes('Dr.') || text.includes('Doctor')) doctorScore += 3;
-      if (text.includes('I ') || text.includes('my ')) patientScore += 1;
-      if (text.includes('you ') || text.includes('your ')) doctorScore += 1;
-      if (text.includes('prescribe') || text.includes('take')) doctorScore += 3;
-      if (text.includes('hurt') || text.includes('pain')) patientScore += 2;
+      // Additional heuristics with higher weights
+      if (/^(yes|no|okay|alright|sure|thanks|thank you)/i.test(text)) {
+        patientScore += 2;
+      }
+      
+      if (/\b(let me|i would|i will|i can|i'm going to)\b/i.test(text)) {
+        doctorScore += 2;
+      }
 
-      // Determine speaker based on scores and previous speaker
-      if (index === 0) {
-        // First segment - use scores to determine initial speaker
-        currentSpeaker = doctorScore >= patientScore ? 'Doctor' : 'Patient';
-      } else {
+      if (/\b(could you|can you|please|help)\b/i.test(text)) {
+        patientScore += 3;
+      }
+
+      if (/\b(you should|you need|you must|we'll|we will)\b/i.test(text)) {
+        doctorScore += 3;
+      }
+
+      if (/\b(i think|i believe|i guess|i suppose)\b/i.test(text)) {
+        patientScore += 2;
+      }
+
+      if (/\b(the issue is|the problem is|what's happening|what's wrong)\b/i.test(text)) {
+        patientScore += 2;
+      }
+
+      if (/\b(we need to|i recommend|i suggest|i advise)\b/i.test(text)) {
+        doctorScore += 3;
+      }
+
+      // Adjust for conversation flow - penalize too many consecutive segments from same speaker
+      if (index > 0) {
         const prevSpeaker = segments[index - 1].speaker;
-        
-        // If scores are similar, keep the same speaker (continuity)
-        const scoreDiff = Math.abs(doctorScore - patientScore);
-        if (scoreDiff < 2) {
-          currentSpeaker = prevSpeaker;
+        if (prevSpeaker === 'Doctor') {
+          consecutiveDoctor++;
+          consecutivePatient = 0;
         } else {
-          // Switch to the speaker with higher score
-          currentSpeaker = doctorScore > patientScore ? 'Doctor' : 'Patient';
+          consecutivePatient++;
+          consecutiveDoctor = 0;
+        }
+
+        // If same speaker has too many consecutive segments, bias toward switching
+        if (consecutiveDoctor >= 3) {
+          patientScore += 2;
+        }
+        if (consecutivePatient >= 3) {
+          doctorScore += 2;
         }
       }
 
-      // Ensure speaker exists in map
+      // Determine speaker
+      if (index === 0) {
+        currentSpeaker = doctorScore >= patientScore ? 'Doctor' : 'Patient';
+      } else {
+        const prevSpeaker = segments[index - 1].speaker;
+        const scoreDiff = Math.abs(doctorScore - patientScore);
+        
+        // Strong evidence needed to switch speakers
+        if (scoreDiff >= 3) {
+          currentSpeaker = doctorScore > patientScore ? 'Doctor' : 'Patient';
+        } else {
+          // Alternate speakers if scores are similar but different from previous
+          if (prevSpeaker === 'Doctor') {
+            currentSpeaker = patientScore > doctorScore ? 'Patient' : 'Doctor';
+          } else {
+            currentSpeaker = doctorScore > patientScore ? 'Doctor' : 'Patient';
+          }
+        }
+      }
+
+      // Reset consecutive counters when speaker changes
+      if (index > 0 && segments[index - 1].speaker !== currentSpeaker) {
+        consecutiveDoctor = 0;
+        consecutivePatient = 0;
+      }
+
+      // Ensure speaker exists
       if (!speakers.has(currentSpeaker)) {
         speakers.set(currentSpeaker, {
           id: speakerCount++,

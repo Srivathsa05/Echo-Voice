@@ -27,26 +27,117 @@ Keep it under 150 words, no medical jargon. Format as structured JSON with keys:
   "labs": [{"title": "lab test or follow-up", "urgency": "green"}]
 }`;
 
-const QUESTIONS_PROMPT = `Based on this consultation, generate 5-7 important questions patients typically forget to ask about:
-- Side effects of prescribed medications
-- Dietary restrictions
-- Follow-up appointment timing
-- Warning signs to watch for
-- Activity restrictions
-- Long-term prognosis
-- Alternative treatments
+const QUESTIONS_PROMPT = `You are a medical consultation assistant. Analyze this consultation transcript and generate 5-7 CRITICAL questions that patients commonly forget to ask but should have asked.
 
-Format as JSON array:
+Focus on these categories:
+1. **Medication-Specific Questions**: Side effects, interactions, timing with food, missed dose protocol
+2. **Lifestyle & Dietary Questions**: Foods to avoid, alcohol restrictions, activity limitations, dietary changes
+3. **Warning Signs & Red Flags**: When to seek emergency care, symptoms to watch for, normal vs concerning
+4. **Follow-up & Timeline**: When to see doctor again, test result timing, recovery timeline
+5. **Long-term Management**: Prognosis expectations, chronic condition management, preventive measures
+6. **Alternative Options**: Second opinions, treatment alternatives, non-medical approaches
+7. **Practical Concerns**: Cost, insurance coverage, prescription refills, at-home care instructions
+
+CRITICAL RULES:
+- Questions MUST be directly relevant to what was discussed in the consultation
+- Do NOT invent topics not mentioned in the transcript
+- Questions should be specific, actionable, and patient-focused
+- Each question should address a genuine gap in the consultation
+- Prioritize questions about safety and treatment adherence
+
+Format as JSON:
 {
   "questions": [
-    {
-      "question": "clear question statement",
-      "answer": "helpful answer based on the consultation"
-    }
+    "specific question about medication discussed",
+    "specific question about lifestyle mentioned",
+    "specific question about warning signs covered",
+    "specific question about follow-up timeline",
+    "specific question about dietary restrictions mentioned"
   ]
-}`;
+}
+
+Do NOT include answers - only the questions themselves.`;
+
+const SPECIALTY_PROMPT = `You are a medical specialist analyzer. Analyze this consultation transcript and determine the doctor's medical specialty.
+
+Based on the medical terminology, conditions discussed, treatments mentioned, and the nature of the consultation, identify the most appropriate medical specialty.
+
+Common specialties include:
+- Cardiology (heart conditions, blood pressure, cholesterol)
+- Neurology (brain, nerves, stroke, headaches)
+- Orthopedics (bones, joints, muscles, fractures)
+- Dermatology (skin conditions, rashes)
+- Gastroenterology (digestive system, stomach, liver)
+- Pulmonology (lungs, respiratory, asthma)
+- Endocrinology (hormones, diabetes, thyroid)
+- Oncology (cancer, tumors)
+- Nephrology (kidneys)
+- General Practice / Family Medicine (general health, checkups)
+- Internal Medicine (adult health, complex conditions)
+- Pediatrics (children's health)
+- Obstetrics/Gynecology (women's health, pregnancy)
+- Psychiatry (mental health)
+- Ophthalmology (eyes)
+- Otolaryngology (ENT, ears, nose, throat)
+- Urology (urinary system)
+
+Return ONLY the specialty name as a plain string. Do not include any explanation or additional text.`;
 
 export const analysisService = {
+  async detectSpecialty(transcript) {
+    const maxRetries = config.openai.maxRetries;
+    let lastError;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        logger.info(`Specialty detection attempt ${attempt}/${maxRetries}`);
+
+        const responsePromise = openai.chat.completions.create({
+          model: config.openai.gptModel,
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a medical specialist analyzer. Always respond with just the specialty name.'
+            },
+            {
+              role: 'user',
+              content: `${SPECIALTY_PROMPT}\n\nTranscript:\n${transcript}`
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 50
+        });
+
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Specialty detection timeout')), 30000);
+        });
+
+        const response = await Promise.race([responsePromise, timeoutPromise]);
+        const specialty = response.choices[0].message.content.trim();
+
+        logger.info(`Specialty detected: ${specialty}`);
+        return specialty;
+      } catch (error) {
+        lastError = error;
+        
+        if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
+          logger.error(`Specialty detection attempt ${attempt} failed - Network error:`, error.code);
+        } else {
+          logger.error(`Specialty detection attempt ${attempt} failed:`, error.message);
+        }
+
+        if (attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+          logger.info(`Retrying specialty detection in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    logger.warn(`Specialty detection failed after ${maxRetries} attempts, using default`);
+    return 'General Practice';
+  },
+
   async generateSummary(transcript) {
     const maxRetries = config.openai.maxRetries;
     let lastError;
@@ -141,7 +232,16 @@ export const analysisService = {
         const questions = JSON.parse(content);
 
         logger.info('Questions generated successfully');
-        return questions.questions || [];
+        
+        // Handle both formats: { questions: [...] } and [...]
+        if (Array.isArray(questions)) {
+          return questions;
+        } else if (questions.questions && Array.isArray(questions.questions)) {
+          return questions.questions;
+        } else {
+          logger.warn('Unexpected questions format:', questions);
+          return [];
+        }
       } catch (error) {
         lastError = error;
         

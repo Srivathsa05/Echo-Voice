@@ -6,6 +6,7 @@ import { Transcript } from '../models/Transcript.js';
 import { ConsultationSummary } from '../models/ConsultationSummary.js';
 import { ForgottenQuestions } from '../models/ForgottenQuestions.js';
 import { ChatMessage } from '../models/ChatMessage.js';
+import { consultationModel } from '../models/consultationModel.js';
 import { logger } from '../utils/logger.js';
 
 export const processingService = {
@@ -31,9 +32,74 @@ export const processingService = {
       await this.analyze(sessionId, io);
       await this.generate(sessionId, io);
 
+      // Detect doctor specialty
+      if (session.transcript && session.transcript.cleanedText) {
+        try {
+          const specialty = await analysisService.detectSpecialty(session.transcript.cleanedText);
+          session.specialty = specialty;
+          await sessionStore.updateSession(sessionId, { specialty });
+          logger.info(`Specialty detected: ${specialty}`);
+        } catch (error) {
+          logger.error('Error detecting specialty:', error);
+          session.specialty = 'General Practice';
+        }
+      }
+
       session.status.complete();
       await sessionStore.updateSession(sessionId, { status: session.status });
       this.emitProgress(io, sessionId, session.status);
+
+      // Save to database if DATABASE_URL is configured
+      if (process.env.DATABASE_URL) {
+        try {
+          const consultation = await consultationModel.getConsultationBySessionId(sessionId);
+          let consultationId;
+
+          if (!consultation) {
+            // Create new consultation
+            const created = await consultationModel.createConsultation({
+              sessionId,
+              doctorName: session.doctorName,
+              patientName: session.patientName,
+              audioFileName: session.audioFile.originalName,
+              audioDuration: session.audioFile.duration,
+              specialty: session.specialty || 'General Practice'
+            });
+            consultationId = created.id;
+          } else {
+            consultationId = consultation.id;
+          }
+
+          // Save transcript
+          if (session.transcript) {
+            await consultationModel.saveTranscript(consultationId, {
+              rawText: session.transcript.rawText,
+              cleanedText: session.transcript.cleanedText,
+              segments: session.transcript.segments,
+              language: session.transcript.language,
+              duration: session.transcript.duration
+            });
+          }
+
+          // Save summary
+          if (session.summary) {
+            await consultationModel.saveSummary(consultationId, session.summary);
+          }
+
+          // Save questions
+          if (session.questions) {
+            await consultationModel.saveQuestions(consultationId, {
+              questions: session.questions.questions,
+              answers: session.questions.answers || []
+            });
+          }
+
+          logger.info(`Consultation saved to database: ${consultationId}`);
+        } catch (dbError) {
+          logger.error('Error saving to database:', dbError);
+          // Don't fail the entire process if database save fails
+        }
+      }
 
       return session;
     } catch (error) {
@@ -121,8 +187,8 @@ export const processingService = {
 
     const questions = new ForgottenQuestions({
       sessionId,
-      questions: questionsData.map(q => q.question),
-      answers: questionsData.map(q => q.answer)
+      questions: questionsData,
+      answers: []
     });
 
     session.questions = questions;

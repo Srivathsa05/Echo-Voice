@@ -15,6 +15,7 @@ import resultsRoutes from './routes/results.js';
 import chatRoutes from './routes/chat.js';
 import exportRoutes from './routes/export.js';
 import historyRoutes from './routes/history.js';
+import smsRoutes from './routes/sms.js';
 import healthRoutes from './routes/health.js';
 
 import { errorHandler } from './middleware/errorHandler.js';
@@ -95,6 +96,7 @@ app.use('/api/results', resultsRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/history', historyRoutes);
+app.use('/api/sms', smsRoutes);
 app.use('/api/health', healthRoutes);
 
 io.on('connection', (socket) => {
