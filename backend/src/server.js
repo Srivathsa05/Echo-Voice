@@ -42,12 +42,12 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+    origins :[ process.env.CORS_ORIGIN || 'http://localhost:5173', "https://echo-frontend-puce.vercel.app/"],
     methods: ['GET', 'POST'],
     credentials: true
   }
 });
-
+ 
 // Handle server errors
 httpServer.on('error', (error) => {
   if (error.code === 'ECONNRESET') {
