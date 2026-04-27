@@ -94,6 +94,15 @@ Answer the patient's question based on this consultation. If the information is 
     });
   } catch (error) {
     logger.error('Chat error:', error);
+    
+    // If API key is missing or invalid, return mock response
+    if (error.message.includes('API') || error.message.includes('401') || error.message.includes('key')) {
+      logger.warn('OpenAI API key issue - returning mock response');
+      return res.json({
+        answer: "I'm in demo mode without API keys right now. Based on your consultation, I'd suggest discussing this with your doctor. This is a temporary limitation - full AI responses will work once API keys are configured."
+      });
+    }
+    
     next(error);
   }
 });
